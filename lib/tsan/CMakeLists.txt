@@ -53,7 +53,8 @@ set(TSAN_SOURCES
   rtl/tsan_stat.cc
   rtl/tsan_suppressions.cc
   rtl/tsan_symbolize.cc
-  rtl/tsan_sync.cc)
+  rtl/tsan_sync.cc
+  rtl/tsan_crossbowman.cc)
 
 set(TSAN_CXX_SOURCES
   rtl/tsan_new_delete.cc)
@@ -101,7 +102,8 @@ set(TSAN_HEADERS
   rtl/tsan_symbolize.h
   rtl/tsan_sync.h
   rtl/tsan_trace.h
-  rtl/tsan_update_shadow_word_inl.h)
+  rtl/tsan_update_shadow_word_inl.h
+  rtl/tsan_crossbowman.h)
 
 set(TSAN_RUNTIME_LIBRARIES)
 add_compiler_rt_component(tsan)

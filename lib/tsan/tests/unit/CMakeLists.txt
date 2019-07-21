@@ -6,7 +6,8 @@ set(TSAN_UNIT_TEST_SOURCES
   tsan_shadow_test.cc
   tsan_stack_test.cc
   tsan_sync_test.cc
-  tsan_unit_test_main.cc)
+  tsan_unit_test_main.cc
+  tsan_crossbowman_test.cc)
 
 add_tsan_unittest(TsanUnitTest
   SOURCES ${TSAN_UNIT_TEST_SOURCES})

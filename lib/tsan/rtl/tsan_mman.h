@@ -70,7 +70,9 @@ enum MBlockType {
   MBlockExpectRace,
   MBlockSignal,
   MBlockJmpBuf,
-
+  // Data structure for crossbowman
+  MBlockNode,
+  MBlockPointer,
   // This must be the last.
   MBlockTypeCount
 };
