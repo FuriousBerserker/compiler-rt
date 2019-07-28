@@ -45,6 +45,7 @@
 #include "tsan_mutexset.h"
 #include "tsan_ignoreset.h"
 #include "tsan_stack_trace.h"
+#include "tsan_crossbowman.h"
 
 #if SANITIZER_WORDSIZE != 64
 # error "ThreadSanitizer is supported only on 64-bit platforms"
@@ -319,6 +320,96 @@ class Shadow : public FastState {
       return true;
     return false;
   }
+
+
+  // Shadow (from most significant bit):
+  //   freed                      : 1
+  //   tid                        : kTidBits
+  //   is_target_initialized      : 1
+  //   is_host_initialized        : 1
+  //   is_target_latest           : 1
+  //   is_host_latest             : 1
+  //   is_atomic                  : 1
+  //   is_read                    : 1
+  //   size_log                   : 2
+  //   addr0                      : 3
+  //   epoch                      : kClkBits
+  
+  // is_target_initialized, is_host_initialized, is_target_latest, is_host_latest are only valid in the first shadow word of every shadow state.
+  // The four bits in other shadow words are never accessed.
+ private: 
+  static const u64 cTIMask = 0x1ull << (64 - 1 - kTidBits - 1);
+  static const u64 cHIMask = 0x1ull << (64 - 1 - kTidBits - 2);
+  static const u64 cTLMask = 0x1ull << (64 - 1 - kTidBits - 3);
+  static const u64 cHLMask = 0x1ull << (64 - 1 - kTidBits - 4);
+  static const u64 cHIHLMask = 0x5ull << (64 - 1 - kTidBits - 4);
+  static const u64 cTITLMask = 0xaull << (64 - 1 - kTidBits - 4);
+  static const u64 cAllFieldMask = 0xfull << (64 - 1 - kTidBits - 4);
+ 
+ public:
+  bool isTargetInitialized() const {
+    return x_ & cTIMask; 
+  }
+
+  bool isHostInitialized() const {
+    return x_ & cHIMask;
+  }
+
+  bool isTargetLatest() const {
+    return x_ & cTLMask;
+  }
+
+  bool isHostLatest() const {
+    return x_ & cHLMask;
+  }
+
+  void setHostInitializedAndLatest() {
+    x_ |= cHIHLMask;
+  }
+
+  void setTargetInitialized() {
+    x_ |= cTIMask;
+  }
+
+  void setTargetLatest() {
+    x_ |= cTITLMask;
+    x_ &= ~(cHLMask);
+  }
+
+  void setHostLatest() {
+    x_ |= cHIHLMask;
+    x_ &= ~(cTLMask);
+  }
+
+  void setTargetAndHostLatest() {
+    x_ |= cTLMask;
+    x_ |= cHLMask;
+  }
+ 
+  void setTargetStateByHostState() {
+    x_ |= ((x_ & cHIHLMask) << 1); 
+  }
+
+  void setHostStateByTargetState() {
+    x_ |= ((x_ & cTITLMask) >> 1);
+  }
+
+  void copyMappingStates(const Shadow &s) {
+    x_ |= (s.x_ & cAllFieldMask);
+  }
+
+  void resetHostState() {
+    x_ &= ~(cHIHLMask);
+  }
+
+  void resetTargetState() {
+    x_ &= ~(cTITLMask);
+  }
+
+  void setMappingStates() {
+    x_ |= cAllFieldMask; 
+  }
+
 };
 
 struct ThreadSignalContext;
@@ -447,6 +538,8 @@ struct ThreadState {
 
   const ReportDesc *current_report;
 
+  bool is_on_target;
+
   explicit ThreadState(Context *ctx, int tid, int unique_id, u64 epoch,
                        unsigned reuse_count,
                        uptr stk_addr, uptr stk_size,
@@ -557,6 +650,8 @@ struct Context {
   u64 stat[StatCnt];
   u64 int_alloc_cnt[MBlockTypeCount];
   u64 int_alloc_siz[MBlockTypeCount];
+  IntervalTree t2h;
+  IntervalTree h2t;
 };
 
 extern Context *ctx;  // The one and the only global runtime context.

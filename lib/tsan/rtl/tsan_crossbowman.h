@@ -54,7 +54,7 @@ struct Interval {
 
 struct MapInfo {
     uptr start;
-    operator_new_size_type size;
+    uptr size;
 };
 
 struct Node {
@@ -142,6 +142,10 @@ class IntervalTree {
         Iterator i{};
         i.next_node = root->parent;
         return i;
+    }
+
+    Node* find(uptr begin, uptr size) {
+        return find({begin, begin + size});
     }
 };
 

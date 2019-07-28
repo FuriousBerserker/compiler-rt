@@ -21,12 +21,24 @@
 #include "tsan_mman.h"
 #include "tsan_flags.h"
 #include "tsan_platform.h"
+#include "tsan_crossbowman.h"
 
 #define CALLERPC ((uptr)__builtin_return_address(0))
 
 using namespace __tsan;  // NOLINT
 
 namespace __tsan {
+
+ALWAYS_INLINE
+Shadow LoadShadow(u64 *p) {
+  u64 raw = atomic_load((atomic_uint64_t*)p, memory_order_relaxed);
+  return Shadow(raw);
+}
+
+ALWAYS_INLINE
+void StoreShadow(u64 *sp, u64 s) {
+  atomic_store((atomic_uint64_t*)sp, s, memory_order_relaxed);
+}
 
 class ScopedAnnotation {
  public:
@@ -458,6 +470,130 @@ void INTERFACE_ATTRIBUTE
 AnnotateMemoryIsInitialized(char *f, int l, uptr mem, uptr sz) {}
 void INTERFACE_ATTRIBUTE
 AnnotateMemoryIsUninitialized(char *f, int l, uptr mem, uptr sz) {}
+
+// annotations for crossbowman
+
+void INTERFACE_ATTRIBUTE
+AnnotateMapping(const void *src_addr, const void *dest_addr, uptr bytes, u8 optype) {
+  SCOPED_ANNOTATION(AnnotateMapping);
+  switch (optype) {
+  case ompt_mapping_alloc: {
+    ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes});
+    ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes});
+    break;
+  }
+  case ompt_mapping_transfer_to_device: {
+    //ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes});
+    //ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes});
+    ASSERT(ctx->h2t.find((uptr)src_addr, bytes), "[transfer to device] Missed data mapping, host: %p -> target: %p, size = %u\n", src_addr, dest_addr, bytes);
+    ASSERT(ctx->t2h.find((uptr)dest_addr, bytes), "[transfer to device] Missed data mapping, target: %p -> host: %p, size = %u\n", dest_addr, src_addr, bytes);
+    uptr size = ((bytes - 1) / kShadowCell + 1) * kShadowCell;
+    uptr host_start_addr = (uptr)src_addr;
+    for (uptr offset = 0; offset < size; offset += kShadowCell) {
+      uptr host_addr = host_start_addr + offset;
+      if (UNLIKELY(!IsAppMem(host_addr))) {
+        Printf("[transfer to device] target addr %zx has a corresponding host addr %zx, but the host addr is not in application memory\n",
+            (uptr)dest_addr + offset, host_addr); 
+        break;
+      }
+      u64 *shadow_mem = (u64*)MemToShadow(host_addr);
+      Shadow s = LoadShadow(shadow_mem);
+      s.setTargetStateByHostState();
+      StoreShadow(shadow_mem, s.raw());
+    }
+    break;
+  }
+  case ompt_mapping_transfer_from_device: {
+    ASSERT(ctx->h2t.find((uptr)dest_addr, bytes), "[transfer from device] Missed data mapping, host: %p -> target: %p, size = %u\n", dest_addr, src_addr, bytes);
+    ASSERT(ctx->t2h.find((uptr)src_addr, bytes), "[transfer from device] Missed data mapping, target: %p -> host: %p, size = %u\n", src_addr, dest_addr, bytes);
+    uptr size = ((bytes - 1) / kShadowCell + 1) * kShadowCell;
+    uptr host_start_addr = (uptr)dest_addr;
+    for (uptr offset = 0; offset < size; offset += kShadowCell) {
+      uptr host_addr = host_start_addr + offset;
+      if (UNLIKELY(!IsAppMem(host_addr))) {
+        Printf("[transfer from device] target addr %zx has a corresponding host addr %zx, but the host addr is not in application memory\n",
+            (uptr)src_addr + offset, host_addr); 
+        break;
+      }
+      u64 *shadow_mem = (u64*)MemToShadow(host_addr);
+      Shadow s = LoadShadow(shadow_mem);
+      s.setHostStateByTargetState();
+      StoreShadow(shadow_mem, s.raw());
+    }
+    break;
+  }
+  case ompt_mapping_delete: {
+    Node *n = ctx->t2h.find((uptr)src_addr, 1);
+    ASSERT(n, "[delete] Missing data mapping for delete, target: %p\n", src_addr);
+    uptr host_start_addr = n->info.start;
+    uptr size = n->info.size;
+    ctx->t2h.remove({(uptr)src_addr, (uptr)src_addr + size});
+    ctx->h2t.remove({host_start_addr, host_start_addr + size});
+    size = ((size - 1) / kShadowCell + 1) * kShadowCell;
+    for (uptr offset = 0; offset < size; offset += kShadowCell) {
+      uptr host_addr = host_start_addr + offset;
+      if (UNLIKELY(!IsAppMem(host_addr))) {
+        Printf("[delete] target addr %zx has a corresponding host addr %zx, but the host addr is not in application memory\n",
+            (uptr)src_addr + offset, host_addr); 
+        break;
+      }
+      u64 *shadow_mem = (u64*)MemToShadow(host_addr);
+      Shadow s = LoadShadow(shadow_mem);
+      s.resetTargetState();
+      StoreShadow(shadow_mem, s.raw());
+    }
+    break;
+  }
+  case ompt_mapping_associate: {
+    ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes});
+    ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes});
+    if (IsLoAppMem((uptr)src_addr)) {
+        // global variable
+      uptr size = ((bytes - 1) / kShadowCell + 1) * kShadowCell;
+      uptr host_start_addr = (uptr)src_addr;
+      
+      for (uptr offset = 0; offset < size; offset += kShadowCell) {
+        uptr host_addr = host_start_addr + offset;
+        u64 *shadow_mem = (u64*)MemToShadow(host_addr);
+        Shadow s = LoadShadow(shadow_mem);
+        // FIXME: currently associate is only used for global variable mapping, so if it uninitialized, it means there is no write on host,
+        // and both host and target should see the initial value. Otherwise, there is at least one write on host and target cannot see the 
+        // latest value
+        if (!s.isHostInitialized()) {
+          s.setMappingStates();
+        } else {
+          s.setHostLatest();
+          s.setTargetInitialized();
+        }
+        StoreShadow(shadow_mem, s.raw());
+      }
+    }
+    break;
+  }
+  case ompt_mapping_disassociate: {
+    ASSERT(false, "Unsupported optype: %d\n", optype);
+    break;
+  }
+  default: {
+    ASSERT(false, "Unknown optype: %d\n", optype);
+  }
+  }
+}
+
+void INTERFACE_ATTRIBUTE
+AnnotateEnterTargetRegion() {
+  SCOPED_ANNOTATION(AnnotateEnterTargetRegion); 
+  //Printf("enter target region\n");
+  thr->is_on_target = true;
+}
+
+
+void INTERFACE_ATTRIBUTE
+AnnotateExitTargetRegion() {
+  SCOPED_ANNOTATION(AnnotateExitTargetRegion)
+  //Printf("exit target region\n");
+  thr->is_on_target = false;
+}
 
 // Note: the parameter is called flagz, because flags is already taken
 // by the global function that returns flags.

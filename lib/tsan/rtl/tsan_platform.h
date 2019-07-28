@@ -688,6 +688,15 @@ uptr TraceMemEnd(void) {
   return MappingArchImpl<MAPPING_TRACE_END>();
 }
 
+template<typename Mapping>
+bool IsLoAppMemImpl(uptr mem) {
+    return (mem >= Mapping::kLoAppMemBeg && mem < Mapping::kLoAppMemEnd);
+}
+
+ALWAYS_INLINE
+bool IsLoAppMem(uptr mem) {
+    return IsLoAppMemImpl<Mapping>(mem); 
+}
 
 template<typename Mapping>
 bool IsAppMemImpl(uptr mem) {

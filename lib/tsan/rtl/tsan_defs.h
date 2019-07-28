@@ -61,7 +61,8 @@ struct ClockBlock {
   }
 };
 
-const int kTidBits = 13;
+//const int kTidBits = 13;
+const int kTidBits = 9;
 // Reduce kMaxTid by kClockCount because one slot in ClockBlock table is
 // occupied by reference counter, so total number of elements we can store
 // in SyncClock is kClockCount * (kTableSize - 1).

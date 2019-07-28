@@ -1,4 +1,5 @@
 #include "tsan_crossbowman.h"
+#include "tsan_rtl.h"
 #include "gtest/gtest.h"
 #include <vector>
 #include <algorithm>
@@ -97,6 +98,87 @@ TEST(Crossbowman, IntervalTreeDeleteInternalNode2) {
     }
 
     EXPECT_EQ(tree.getRoot()->interval, (Interval{3, 5}));
+}
+
+TEST(Crossbowman, MappingStateInShadow) {
+    Shadow s(0ull);
+    EXPECT_EQ(s.isTargetInitialized(), false);
+    EXPECT_EQ(s.isHostInitialized(), false);
+    EXPECT_EQ(s.isTargetLatest(), false);
+    EXPECT_EQ(s.isHostLatest(), false);
+    s.setTargetLatest();
+    EXPECT_EQ(s.raw(), 0x0028000000000000ull);
+    EXPECT_EQ(s.isTargetInitialized(), true);
+    EXPECT_EQ(s.isHostInitialized(), false);
+    EXPECT_EQ(s.isTargetLatest(), true);
+    EXPECT_EQ(s.isHostLatest(), false);
+    s.setHostLatest();
+    EXPECT_EQ(s.raw(), 0x0034000000000000ull);
+    EXPECT_EQ(s.isTargetInitialized(), true);
+    EXPECT_EQ(s.isHostInitialized(), true);
+    EXPECT_EQ(s.isTargetLatest(), false);
+    EXPECT_EQ(s.isHostLatest(), true);
+    
+    Shadow s2(0ull);
+    s2.setTargetAndHostLatest();
+    EXPECT_EQ(s2.raw(), 0x000c000000000000ull);
+    EXPECT_EQ(s2.isTargetInitialized(), false);
+    EXPECT_EQ(s2.isHostInitialized(), false);
+    EXPECT_EQ(s2.isTargetLatest(), true);
+    EXPECT_EQ(s2.isHostLatest(), true);
+
+    Shadow s3(0x0010000000000000ull);
+    s3.setTargetStateByHostState();
+    EXPECT_EQ(s3.raw(), 0x0030000000000000ull);
+    EXPECT_EQ(s3.isTargetInitialized(), true);
+    EXPECT_EQ(s3.isHostInitialized(), true);
+    EXPECT_EQ(s3.isTargetLatest(), false);
+    EXPECT_EQ(s3.isHostLatest(), false);
+
+    Shadow s4(0x0008000000000000ull);
+    s4.setHostStateByTargetState();
+    EXPECT_EQ(s4.raw(), 0x000c000000000000ull);
+    EXPECT_EQ(s4.isTargetInitialized(), false);
+    EXPECT_EQ(s4.isHostInitialized(), false);
+    EXPECT_EQ(s4.isTargetLatest(), true);
+    EXPECT_EQ(s4.isHostLatest(), true);
+
+    Shadow s5(0x003c000000000000ull);
+    Shadow s6(0ull);
+    s6.copyMappingStates(s5);
+    EXPECT_EQ(s6.raw(), s5.raw());
+
+    Shadow s7(0xffffffffffffffffull);
+    s7.resetHostState();
+    EXPECT_EQ(s7.raw(), 0xffebffffffffffffull);
+    EXPECT_EQ(s7.isTargetInitialized(), true);
+    EXPECT_EQ(s7.isHostInitialized(), false);
+    EXPECT_EQ(s7.isTargetLatest(), true);
+    EXPECT_EQ(s7.isHostLatest(), false);
+
+    Shadow s8(0xffffffffffffffffull);
+    s8.resetTargetState();
+    EXPECT_EQ(s8.raw(), 0xffd7ffffffffffffull);
+    EXPECT_EQ(s8.isTargetInitialized(), false);
+    EXPECT_EQ(s8.isHostInitialized(), true);
+    EXPECT_EQ(s8.isTargetLatest(), false);
+    EXPECT_EQ(s8.isHostLatest(), true);
+
+    Shadow s9(0x0000000000000000ull);
+    s9.setMappingStates();
+    EXPECT_EQ(s9.raw(), 0x003c000000000000ull);
+    EXPECT_EQ(s9.isTargetInitialized(), true);
+    EXPECT_EQ(s9.isHostInitialized(), true);
+    EXPECT_EQ(s9.isTargetLatest(), true);
+    EXPECT_EQ(s9.isHostLatest(), true);
+
+    Shadow s10(0x0000000000000000ull);
+    s10.setHostInitializedAndLatest();
+    EXPECT_EQ(s10.raw(), 0x0014000000000000ull);
+    EXPECT_EQ(s10.isTargetInitialized(), false);
+    EXPECT_EQ(s10.isHostInitialized(), true);
+    EXPECT_EQ(s10.isTargetLatest(), false);
+    EXPECT_EQ(s10.isHostLatest(), true);
 }
 
 } // namespace __tsan
