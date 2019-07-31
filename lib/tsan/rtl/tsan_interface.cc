@@ -32,6 +32,27 @@ void __tsan_flush_memory() {
   FlushShadowMemory();
 }
 
+void __tsan_filtered_read16(void *addr) {
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr, kSizeLog8);
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr + 8, kSizeLog8);
+}
+
+void __tsan_filtered_unaligned_read2(const void *addr) {
+  CheckMappingForUnaligned(cur_thread(), CALLERPC, (uptr)addr, 2);
+}
+
+void __tsan_filtered_unaligned_read4(const void *addr) {
+  CheckMappingForUnaligned(cur_thread(), CALLERPC, (uptr)addr, 4);
+}
+
+void __tsan_filtered_unaligned_read8(const void *addr) {
+  CheckMappingForUnaligned(cur_thread(), CALLERPC, (uptr)addr, 8);
+}
+
+void __tsan_filtered_unaligned_read16(const void *addr) {
+  CheckMappingForUnaligned(cur_thread(), CALLERPC, (uptr)addr, 16);
+}
+
 void __tsan_read16(void *addr) {
   MemoryRead(cur_thread(), CALLERPC, (uptr)addr, kSizeLog8);
   MemoryRead(cur_thread(), CALLERPC, (uptr)addr + 8, kSizeLog8);

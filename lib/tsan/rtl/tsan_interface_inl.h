@@ -17,6 +17,22 @@
 
 using namespace __tsan;  // NOLINT
 
+void __tsan_filtered_read1(void *addr) {
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr, kSizeLog1);
+}
+
+void __tsan_filtered_read2(void *addr) {
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr, kSizeLog2);
+}
+
+void __tsan_filtered_read4(void *addr) {
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr, kSizeLog4);
+}
+
+void __tsan_filtered_read8(void *addr) {
+  CheckMapping(cur_thread(), CALLERPC, (uptr)addr, kSizeLog8);
+}
+
 void __tsan_read1(void *addr) {
   MemoryRead(cur_thread(), CALLERPC, (uptr)addr, kSizeLog1);
 }

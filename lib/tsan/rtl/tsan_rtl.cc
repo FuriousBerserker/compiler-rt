@@ -805,6 +805,90 @@ bool ContainsSameAccess(u64 *s, u64 a, u64 sync_epoch, bool is_write) {
 }
 
 ALWAYS_INLINE USED
+void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog) {
+  //memory access checking, check weather the read see the latest value
+  do {
+    if (thr->is_on_target) {
+      Node* mapping = ctx->t2h.find(addr, 1 << kAccessSizeLog);
+      if (mapping) {
+        uptr host_addr = mapping->info.start + (addr - mapping->interval.left_end);
+        //if (IsHiAppMem(host_addr)) {
+          //break;
+        //}
+
+        if (UNLIKELY(!IsAppMem(host_addr))) {
+          Printf("[access on target (check mapping only)] target addr %012zx has a corresponding host addr %012zx, but the host addr is not in application memory\n",
+              addr, host_addr); 
+          break;
+        }
+        u64 *host_shadow_mem = (u64*)MemToShadow(host_addr);
+        if (UNLIKELY(!IsShadowMem((uptr)host_shadow_mem))) {
+          Printf("[access on target (check mapping only)] target addr %012zx has a corresponding host addr %012zx, but the shadow memory addr %p is invalid\n", 
+              addr, host_addr, host_shadow_mem);
+          break;
+        }
+        Shadow s = LoadShadow(host_shadow_mem);
+
+        if (!s.isTargetInitialized()) {
+          Printf("[access on target (check mapping only)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
+          Printf("=======================================================\n");
+          PrintCurrentStack(thr, TraceTopPC(thr));
+        }
+
+        if (!s.isTargetLatest()) {
+          Printf("[access on target (check mapping only)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          Printf("=======================================================\n");
+          PrintCurrentStack(thr, TraceTopPC(thr));
+        }
+      }
+    } else {
+      if (IsHiAppMem(addr)) {
+        break;
+      }
+      u64 *shadow_mem = (u64*)MemToShadow(addr);
+      Shadow s = LoadShadow(shadow_mem);
+      if (!s.isHostInitialized()) {
+        if (!IsLoAppMem(addr)) {
+          //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
+          Printf("[access on host (check mapping only)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          Printf("=======================================================\n");
+          PrintCurrentStack(thr, TraceTopPC(thr));
+        }
+      }
+      
+      //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
+      if (!s.isHostLatest()) {
+        if (!IsLoAppMem(addr) || s.isHostInitialized()) {
+          Printf("[access on host (check mapping only)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          Printf("=======================================================\n");
+          PrintCurrentStack(thr, TraceTopPC(thr));
+        }
+      }
+    }
+  } while (0);
+}
+
+void CheckMappingForUnaligned(ThreadState *thr, uptr pc, uptr addr, int size) {
+  while (size) {
+    int size1 = 1;
+    int kAccessSizeLog = kSizeLog1;
+    if (size >= 8 && (addr & ~7) == ((addr + 7) & ~7)) {
+      size1 = 8;
+      kAccessSizeLog = kSizeLog8;
+    } else if (size >= 4 && (addr & ~7) == ((addr + 3) & ~7)) {
+      size1 = 4;
+      kAccessSizeLog = kSizeLog4;
+    } else if (size >= 2 && (addr & ~7) == ((addr + 1) & ~7)) {
+      size1 = 2;
+      kAccessSizeLog = kSizeLog2;
+    }
+    CheckMapping(thr, pc, addr, kAccessSizeLog);
+    addr += size1;
+    size -= size1;
+  }
+}
+
+ALWAYS_INLINE USED
 void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
     int kAccessSizeLog, bool kAccessIsWrite, bool kIsAtomic) {
   u64 *shadow_mem = (u64*)MemToShadow(addr);
@@ -855,14 +939,18 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
       Node* mapping = ctx->t2h.find(addr, 1 << kAccessSizeLog);
       if (mapping) {
         uptr host_addr = mapping->info.start + (addr - mapping->interval.left_end);
+        //if (IsHiAppMem(host_addr)) {
+          //break;
+        //}
+
         if (UNLIKELY(!IsAppMem(host_addr))) {
-          Printf("[access on target] target addr %zx has a corresponding host addr %zx, but the host addr is not in application memory\n",
+          Printf("[access on target (check mapping and race)] target addr %012zx has a corresponding host addr %012zx, but the host addr is not in application memory\n",
               addr, host_addr); 
           break;
         }
         u64 *host_shadow_mem = (u64*)MemToShadow(host_addr);
         if (UNLIKELY(!IsShadowMem((uptr)host_shadow_mem))) {
-          Printf("[access on target] target addr %zx has a corresponding host addr %zx, but the shadow memory addr %p is invalid\n", 
+          Printf("[access on target (check mapping and race)] target addr %012zx has a corresponding host addr %012zx, but the shadow memory addr %p is invalid\n", 
               addr, host_addr, host_shadow_mem);
           break;
         }
@@ -872,19 +960,22 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
           StoreShadow(host_shadow_mem, s.raw());
         } else {
           if (!s.isTargetInitialized()) {
-            Printf("access uninitialized memory %zx on target \n", addr);
-            Printf("=============================================\n");
+            Printf("[access on target (check mapping and race)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
+            Printf("=======================================================\n");
             PrintCurrentStack(thr, TraceTopPC(thr));
           }
 
           if (!s.isTargetLatest()) {
-            Printf("read stale value from memory %zx on target \n", addr); 
-            Printf("=============================================\n");
+            Printf("[access on target (check mapping and race)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            Printf("=======================================================\n");
             PrintCurrentStack(thr, TraceTopPC(thr));
           }
         }
       }
     } else {
+      if (IsHiAppMem(addr)) {
+        break;
+      }
       Shadow s = LoadShadow(shadow_mem);
       cur.copyMappingStates(s);
       if (kAccessIsWrite) {
@@ -894,17 +985,19 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
         if (!s.isHostInitialized()) {
           if (!IsLoAppMem(addr)) {
             //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
-            Printf("access uninitialized memory %zx on host \n", addr); 
-            Printf("=============================================\n");
+            Printf("[access on host (check mapping and race)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            Printf("=======================================================\n");
             PrintCurrentStack(thr, TraceTopPC(thr));
           }
         }
         
         //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
         if (!s.isHostLatest()) {
-          Printf("read stale value from memory %zx on host \n", addr); 
-          Printf("=============================================\n");
-          PrintCurrentStack(thr, TraceTopPC(thr));
+          if (!IsLoAppMem(addr) || s.isHostInitialized()) {
+            Printf("[access on host (check mapping and race)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            Printf("=======================================================\n");
+            PrintCurrentStack(thr, TraceTopPC(thr));
+          }
         }
       }
     }

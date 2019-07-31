@@ -498,8 +498,13 @@ AnnotateMapping(const void *src_addr, const void *dest_addr, uptr bytes, u8 opty
       }
       u64 *shadow_mem = (u64*)MemToShadow(host_addr);
       Shadow s = LoadShadow(shadow_mem);
+      // source is a global variable, it is always initialized
+      if (!s.isHostInitialized() && IsLoAppMem(host_addr)) {
+        s.setHostLatest(); 
+      }
       s.setTargetStateByHostState();
       StoreShadow(shadow_mem, s.raw());
+      //Printf("[transfer to device] src_addr = %016zx, dest_addr = %016zx, shadow_aadr = %016zx, shadow = %016zx\n", host_addr, (uptr)dest_addr + offset, shadow_mem, s.raw());
     }
     break;
   }
@@ -519,6 +524,7 @@ AnnotateMapping(const void *src_addr, const void *dest_addr, uptr bytes, u8 opty
       Shadow s = LoadShadow(shadow_mem);
       s.setHostStateByTargetState();
       StoreShadow(shadow_mem, s.raw());
+      //Printf("[transfer from device] src_addr = %016zx, dest_addr = %016zx, shadow_aadr = %016zx, shadow = %016zx\n", (uptr)src_addr + offset, host_addr, shadow_mem, s.raw());
     }
     break;
   }

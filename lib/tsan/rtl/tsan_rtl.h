@@ -826,6 +826,10 @@ void MemoryAccessRangeStep(ThreadState *thr, uptr pc, uptr addr,
 void UnalignedMemoryAccess(ThreadState *thr, uptr pc, uptr addr,
     int size, bool kAccessIsWrite, bool kIsAtomic);
 
+void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog);
+
+void CheckMappingForUnaligned(ThreadState *thr, uptr pc, uptr addr, int size);
+
 const int kSizeLog1 = 0;
 const int kSizeLog2 = 1;
 const int kSizeLog4 = 2;

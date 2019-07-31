@@ -699,6 +699,16 @@ bool IsLoAppMem(uptr mem) {
 }
 
 template<typename Mapping>
+bool IsHiAppMemImpl(uptr mem) {
+    return (mem >= Mapping::kHiAppMemBeg && mem < Mapping::kHiAppMemEnd);
+}
+
+ALWAYS_INLINE
+bool IsHiAppMem(uptr mem) {
+    return IsHiAppMemImpl<Mapping>(mem);
+}
+
+template<typename Mapping>
 bool IsAppMemImpl(uptr mem) {
 #if !SANITIZER_GO
   return (mem >= Mapping::kHeapMemBeg && mem < Mapping::kHeapMemEnd) ||
