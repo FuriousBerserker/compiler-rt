@@ -842,13 +842,13 @@ void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog) {
         }
       }
     } else {
-      if (IsHiAppMem(addr)) {
-        break;
-      }
+      //if (IsHiAppMem(addr)) {
+        //break;
+      //}
       u64 *shadow_mem = (u64*)MemToShadow(addr);
       Shadow s = LoadShadow(shadow_mem);
       if (!s.isHostInitialized()) {
-        if (!IsLoAppMem(addr)) {
+        if (!IsLoAppMem(addr) && !thr->suppress_reports) {
           //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
           Printf("[access on host (check mapping only)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
           Printf("=======================================================\n");
@@ -857,7 +857,7 @@ void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog) {
       }
       
       //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
-      if (!s.isHostLatest()) {
+      if (!s.isHostLatest() && !thr->suppress_reports) {
         if (!IsLoAppMem(addr) || s.isHostInitialized()) {
           Printf("[access on host (check mapping only)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
           Printf("=======================================================\n");
@@ -973,9 +973,9 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
         }
       }
     } else {
-      if (IsHiAppMem(addr)) {
-        break;
-      }
+      //if (IsHiAppMem(addr)) {
+        //break;
+      //}
       Shadow s = LoadShadow(shadow_mem);
       cur.copyMappingStates(s);
       if (kAccessIsWrite) {
@@ -983,7 +983,7 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
         StoreShadow(shadow_mem, s.raw());
       } else {
         if (!s.isHostInitialized()) {
-          if (!IsLoAppMem(addr)) {
+          if (!IsLoAppMem(addr) && !thr->suppress_reports) {
             //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
             Printf("[access on host (check mapping and race)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
             Printf("=======================================================\n");
@@ -992,7 +992,7 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
         }
         
         //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
-        if (!s.isHostLatest()) {
+        if (!s.isHostLatest() && !thr->suppress_reports) {
           if (!IsLoAppMem(addr) || s.isHostInitialized()) {
             Printf("[access on host (check mapping and race)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
             Printf("=======================================================\n");
