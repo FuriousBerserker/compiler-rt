@@ -133,14 +133,16 @@ Node* IntervalTree::find(const Interval &i) {
     }        
 } 
 
-void IntervalTree::insert(const Interval &interval, const MapInfo &info) {
+bool IntervalTree::insert(const Interval &interval, const MapInfo &info) {
     void *ptr = internal_alloc(MBlockNode, sizeof(Node));
     Node *n = new(ptr) Node(interval, info);
     if (root) {
         if (root->insert(n)) {
             size++;
+            return true;
         } else {
             internal_free(n);
+            return false;
         }
     } else {
         root = n; 
@@ -150,6 +152,7 @@ void IntervalTree::insert(const Interval &interval, const MapInfo &info) {
         root->parent = fakeroot;
         fakeroot->left_child = root;
         size++;
+        return true;
     }
 }
 

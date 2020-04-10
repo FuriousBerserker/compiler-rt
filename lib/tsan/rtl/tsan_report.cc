@@ -109,6 +109,10 @@ static const char *ReportTypeString(ReportType typ, uptr tag) {
       return "signal handler spoils errno";
     case ReportTypeDeadlock:
       return "lock-order-inversion (potential deadlock)";
+    case ReportTypeStaleAccess:
+      return "data mapping issue (stale access)";
+    case ReportTypeUninitializedAccess:
+      return "data mapping issue (uninitialized access)";
     // No default case so compiler warns us if we miss one
   }
   UNREACHABLE("missing case");

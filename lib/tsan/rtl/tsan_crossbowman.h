@@ -128,7 +128,7 @@ class IntervalTree {
 
     Node* find(const Interval &i);
 
-    void insert(const Interval &interval, const MapInfo &info);
+    bool insert(const Interval &interval, const MapInfo &info);
 
     void remove(const Interval &i);
 

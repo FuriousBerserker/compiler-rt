@@ -29,6 +29,9 @@ using namespace __tsan;  // NOLINT
 
 namespace __tsan {
 
+const char *data_op_type[] = {"", "alloc", "transfer to device", 
+    "transfer from device", "delete", "associate", "disassociate"};
+    
 ALWAYS_INLINE
 Shadow LoadShadow(u64 *p) {
   u64 raw = atomic_load((atomic_uint64_t*)p, memory_order_relaxed);
@@ -476,10 +479,13 @@ AnnotateMemoryIsUninitialized(char *f, int l, uptr mem, uptr sz) {}
 void INTERFACE_ATTRIBUTE
 AnnotateMapping(const void *src_addr, const void *dest_addr, uptr bytes, u8 optype) {
   SCOPED_ANNOTATION(AnnotateMapping);
+  
+  Printf("data transfer between host and target, op %s, src is %p, dest is %p, size is %zu\n", data_op_type[(int)optype], src_addr, dest_addr, bytes);
+  
   switch (optype) {
   case ompt_mapping_alloc: {
-    ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes});
-    ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes});
+    ASSERT(ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes}), "[alloc] Host address %p is already involved in a mapping", src_addr);
+    ASSERT(ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes}), "[alloc] Device address %p is already involved in a mapping", dest_addr);
     break;
   }
   case ompt_mapping_transfer_to_device: {
@@ -551,8 +557,8 @@ AnnotateMapping(const void *src_addr, const void *dest_addr, uptr bytes, u8 opty
     break;
   }
   case ompt_mapping_associate: {
-    ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes});
-    ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes});
+    ASSERT(ctx->h2t.insert({(uptr)src_addr, (uptr)src_addr + bytes}, {(uptr)dest_addr, bytes}), "[associate] Host address %p is already involved in a mapping", src_addr);
+    ASSERT(ctx->t2h.insert({(uptr)dest_addr, (uptr)dest_addr + bytes}, {(uptr)src_addr, bytes}), "[associate] Device address %p is already involved in a mapping", dest_addr);
     if (IsLoAppMem((uptr)src_addr)) {
         // global variable
       uptr size = ((bytes - 1) / kShadowCell + 1) * kShadowCell;

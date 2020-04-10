@@ -590,6 +590,11 @@ extern "C" void __tsan_trace_switch() {
 extern "C" void __tsan_report_race() {
   ReportRace(cur_thread());
 }
+
+extern "C" void __tsan_report_dmi() {
+  ReportDMI(cur_thread());
+}
+
 #endif
 
 ALWAYS_INLINE
@@ -619,6 +624,19 @@ void HandleRace(ThreadState *thr, u64 *shadow_mem,
   HACKY_CALL(__tsan_report_race);
 #else
   ReportRace(thr);
+#endif
+}
+
+// report data mapping issues
+ALWAYS_INLINE
+void HandleDMI(ThreadState *thr, u64 *shadow_mem, Shadow cur, bool is_stale_data_access) {
+  thr->racy_state[0] = cur.raw();
+  thr->racy_shadow_addr = shadow_mem;
+  thr->is_stale_data_access = is_stale_data_access;
+#if !SANITIZER_GO
+  HACKY_CALL(__tsan_report_dmi);
+#else
+  ReportDMI(thr);
 #endif
 }
 
@@ -830,15 +848,31 @@ void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog) {
         Shadow s = LoadShadow(host_shadow_mem);
 
         if (!s.isTargetInitialized()) {
-          Printf("[access on target (check mapping only)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
-          Printf("=======================================================\n");
-          PrintCurrentStack(thr, TraceTopPC(thr));
+          //Printf("[access on target (check mapping only)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
+          //Printf("=======================================================\n");
+          //PrintCurrentStack(thr, TraceTopPC(thr));
+          FastState fast_state = thr->fast_state;
+          Shadow cur(fast_state);
+          cur.SetAddr0AndSizeLog(addr & 7, kAccessSizeLog);
+          cur.SetWrite(false);
+          cur.SetAtomic(true);
+          u64 *shadow_mem = (u64*)MemToShadow(addr);
+          HandleDMI(thr, shadow_mem, cur, false);
+          break;
         }
 
         if (!s.isTargetLatest()) {
-          Printf("[access on target (check mapping only)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
-          Printf("=======================================================\n");
-          PrintCurrentStack(thr, TraceTopPC(thr));
+          //Printf("[access on target (check mapping only)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          //Printf("=======================================================\n");
+          //PrintCurrentStack(thr, TraceTopPC(thr));
+          FastState fast_state = thr->fast_state;
+          Shadow cur(fast_state);
+          cur.SetAddr0AndSizeLog(addr & 7, kAccessSizeLog);
+          cur.SetWrite(false);
+          cur.SetAtomic(true);
+          u64 *shadow_mem = (u64*)MemToShadow(addr);
+          HandleDMI(thr, shadow_mem, cur, true);
+          break;
         }
       }
     } else {
@@ -850,18 +884,32 @@ void CheckMapping(ThreadState *thr, uptr pc, uptr addr, int kAccessSizeLog) {
       if (!s.isHostInitialized()) {
         if (!IsLoAppMem(addr) && !thr->suppress_reports) {
           //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
-          Printf("[access on host (check mapping only)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
-          Printf("=======================================================\n");
-          PrintCurrentStack(thr, TraceTopPC(thr));
+          //Printf("[access on host (check mapping only)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          //Printf("=======================================================\n");
+          //PrintCurrentStack(thr, TraceTopPC(thr));
+          FastState fast_state = thr->fast_state;
+          Shadow cur(fast_state);
+          cur.SetAddr0AndSizeLog(addr & 7, kAccessSizeLog);
+          cur.SetWrite(false);
+          cur.SetAtomic(true);
+          HandleDMI(thr, shadow_mem, cur, false);
+          break;
         }
       }
       
       //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
       if (!s.isHostLatest() && !thr->suppress_reports) {
         if (!IsLoAppMem(addr) || s.isHostInitialized()) {
-          Printf("[access on host (check mapping only)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
-          Printf("=======================================================\n");
-          PrintCurrentStack(thr, TraceTopPC(thr));
+          //Printf("[access on host (check mapping only)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+          //Printf("=======================================================\n");
+          //PrintCurrentStack(thr, TraceTopPC(thr));
+          FastState fast_state = thr->fast_state;
+          Shadow cur(fast_state);
+          cur.SetAddr0AndSizeLog(addr & 7, kAccessSizeLog);
+          cur.SetWrite(false);
+          cur.SetAtomic(true);
+          HandleDMI(thr, shadow_mem, cur, true);
+          break;
         }
       }
     }
@@ -960,15 +1008,19 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
           StoreShadow(host_shadow_mem, s.raw());
         } else {
           if (!s.isTargetInitialized()) {
-            Printf("[access on target (check mapping and race)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
-            Printf("=======================================================\n");
-            PrintCurrentStack(thr, TraceTopPC(thr));
+            //Printf("[access on target (check mapping and race)] access uninitialized memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog);
+            //Printf("=======================================================\n");
+            //PrintCurrentStack(thr, TraceTopPC(thr));
+            HandleDMI(thr, shadow_mem, cur, false);
+            break;
           }
 
           if (!s.isTargetLatest()) {
-            Printf("[access on target (check mapping and race)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
-            Printf("=======================================================\n");
-            PrintCurrentStack(thr, TraceTopPC(thr));
+            //Printf("[access on target (check mapping and race)] read stale value from memory %012zx on target, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            //Printf("=======================================================\n");
+            //PrintCurrentStack(thr, TraceTopPC(thr));
+            HandleDMI(thr, shadow_mem, cur, true);
+            break;
           }
         }
       }
@@ -985,18 +1037,22 @@ void MemoryAccess(ThreadState *thr, uptr pc, uptr addr,
         if (!s.isHostInitialized()) {
           if (!IsLoAppMem(addr) && !thr->suppress_reports) {
             //Printf("%016zx, %016zx, %016zx\n", addr, shadow_mem, s.raw());
-            Printf("[access on host (check mapping and race)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
-            Printf("=======================================================\n");
-            PrintCurrentStack(thr, TraceTopPC(thr));
+            //Printf("[access on host (check mapping and race)] access uninitialized memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            //Printf("=======================================================\n");
+            //PrintCurrentStack(thr, TraceTopPC(thr));
+            HandleDMI(thr, shadow_mem, cur, false);
+            break;
           }
         }
         
         //Node *mapping = ctx->h2t.find(addr, 1 << kAccessSizeLog);
         if (!s.isHostLatest() && !thr->suppress_reports) {
           if (!IsLoAppMem(addr) || s.isHostInitialized()) {
-            Printf("[access on host (check mapping and race)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
-            Printf("=======================================================\n");
-            PrintCurrentStack(thr, TraceTopPC(thr));
+            //Printf("[access on host (check mapping and race)] read stale value from memory %012zx on host, access size: %d\n", addr, 1 << kAccessSizeLog); 
+            //Printf("=======================================================\n");
+            //PrintCurrentStack(thr, TraceTopPC(thr));
+            HandleDMI(thr, shadow_mem, cur, true);
+            break;
           }
         }
       }

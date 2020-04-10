@@ -744,6 +744,72 @@ void PrintCurrentStackSlow(uptr pc) {
 #endif
 }
 
+
+void ReportDMI(ThreadState *thr) {
+  CheckNoLocks(thr);
+  
+  if (!flags()->report_bugs)
+    return;
+
+  ReportType typ = thr->is_stale_data_access ? ReportTypeStaleAccess : ReportTypeUninitializedAccess;
+  uptr addr = ShadowToMem((uptr)thr->racy_shadow_addr);
+  uptr addr_min = addr + Shadow(thr->racy_state[0]).addr0();
+  uptr addr_max = addr_min + Shadow(thr->racy_state[0]).size();
+  
+  if (IsFiredSuppression(ctx, typ, addr))
+    return;
+
+  // TODO: shall we reimplement a handleDMIStack or just reuse the handleRacyStack
+  const uptr kMop = 2;
+  VarSizeStackTrace traces[kMop];
+  uptr tags[kMop] = {kExternalTagNone};
+  uptr toppc = TraceTopPC(thr);
+  if (toppc >> kEventPCBits) {
+    // This is a work-around for a known issue.
+    // The scenario where this happens is rather elaborate and requires
+    // an instrumented __sanitizer_report_error_summary callback and
+    // a __tsan_symbolize_external callback and a race during a range memory
+    // access larger than 8 bytes. MemoryAccessRange adds the current PC to
+    // the trace and starts processing memory accesses. A first memory access
+    // triggers a race, we report it and call the instrumented
+    // __sanitizer_report_error_summary, which adds more stuff to the trace
+    // since it is intrumented. Then a second memory access in MemoryAccessRange
+    // also triggers a race and we get here and call TraceTopPC to get the
+    // current PC, however now it contains some unrelated events from the
+    // callback. Most likely, TraceTopPC will now return a EventTypeFuncExit
+    // event. Later we subtract -1 from it (in GetPreviousInstructionPc)
+    // and the resulting PC has kExternalPCBit set, so we pass it to
+    // __tsan_symbolize_external_ex. __tsan_symbolize_external_ex is within its
+    // rights to crash since the PC is completely bogus.
+    // test/tsan/double_race.cc contains a test case for this.
+    toppc = 0;
+  }
+  ObtainCurrentStack(thr, toppc, &traces[0], &tags[0]);
+  if (IsFiredSuppression(ctx, typ, traces[0]))
+    return;
+  ObtainCurrentStack(thr, toppc, &traces[1], &tags[1]);
+  if (HandleRacyStacks(thr, traces, addr_min, addr_max))
+    return;
+  
+  uptr tag = kExternalTagNone;
+  ThreadRegistryLock l0(ctx->thread_registry);
+  ScopedReport rep(typ, tag);
+  Shadow s(thr->racy_state[0]);
+  rep.AddMemoryAccess(addr, tags[0], s, traces[0], &thr->mset);
+
+  FastState fs(thr->racy_state[0]);
+  ThreadContext *tctx = static_cast<ThreadContext*>(
+      ctx->thread_registry->GetThreadLocked(fs.tid()));
+  rep.AddThread(tctx);
+
+  rep.AddLocation(addr_min, addr_max - addr_min);
+
+  if (!OutputReport(thr, rep))
+    return;
+
+  AddRacyStacks(thr, traces, addr_min, addr_max);
+}
+
 }  // namespace __tsan
 
 using namespace __tsan;
